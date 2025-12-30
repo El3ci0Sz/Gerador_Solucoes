@@ -1,0 +1,23 @@
+Instalação do ambiente virtual:
+
+
+Rode esses comandos no terminal:
+
+Windows:
+python -m venv venv
+
+Linux:
+python3 -m venv venv
+
+
+Sempre que for utilizar o gerador, precisa ativar o venv, utilize o comando:
+
+Windows:
+.\venv\Scripts\Activate
+
+Linux:
+source venv/bin/activate
+
+Com o Ambiente ativado, você tem de instalar as dependencias (apenas na primeira vez):
+
+pip install -r requirements.txt
