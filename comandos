@@ -14,8 +14,9 @@ python scripts/runner.py single --tec qca --qca-arch U --unbalanced --k-graphs 1
 
 (Sem Reconvergencia):
 -Mais facil de Gerar.
-python scripts/runner.py single --tec qca --qca-arch U --unbalanced --k-graphs 10 --arch-size 20 20 --num-inputs 3 --num-derivations  5 --grammar-reconvergence False --visualize --output-dir datasets/results_desbalanceados
+python scripts/runner.py single --tec qca --qca-arch U --unbalanced --k-graphs 10 --arch-size 20 20 --num-inputs 3 --num-derivations  2 --grammar-reconvergence False --visualize --output-dir datasets/results_desbalanceados
 
 2DDWAVE:
 
-python scripts/runner.py single --tec qca --qca-arch T --unbalanced --k-graphs 10 --num-inputs 4 --num-derivations 3 --visualize --output-dir datasets/results_desbalanceados
+python scripts/runner.py single --tec qca --qca-arch T --unbalanced --k-graphs 10 --num-inputs 2 --num-derivations 2 --visualize --output-dir datasets/results_desbalanceados
+
