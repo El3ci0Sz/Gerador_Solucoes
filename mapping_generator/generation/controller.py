@@ -27,7 +27,7 @@ class QcaGeneratorWithSave:
                  num_derivations, routing_factor, retries_multiplier, file_saver,
                  balanced=True, visualize=False, use_layered=False, obstacle_intensity=0.15,
                  target_nodes=None, max_skew=3, allow_reconvergence=True, force_grid_size=None,
-                 grammar_reconvergence=False): # NOVO ARGUMENTO
+                 grammar_reconvergence=False):
         
         self.k_target = k_target
         self.arch_sizes = arch_sizes
@@ -369,3 +369,4 @@ def get_ii(num_nodes: int, arch_size: tuple, fixed_ii: Optional[int] = None) -> 
     if total_pes == 0: return 1
 
     return int(ceil(num_nodes / total_pes))
+
