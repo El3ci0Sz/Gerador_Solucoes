@@ -15,7 +15,6 @@ from mapping_generator.architectures.qca import QCA
 from mapping_generator.generation.strategies import SystematicStrategy, RandomStrategy
 from mapping_generator.utils.file_saver import FileSaver, OutputPathManager
 from mapping_generator.generation.strategies.recipes import generate_recipes
-from mapping_generator.utils.qca_analysis import QcaValidator, QcaMetrics
 from mapping_generator.utils.visualizer import GraphVisualizer
 
 logger = logging.getLogger(__name__)
@@ -368,4 +367,5 @@ def get_ii(num_nodes: int, arch_size: tuple, fixed_ii: Optional[int] = None) -> 
     rows, cols = arch_size
     total_pes = rows * cols
     if total_pes == 0: return 1
+
     return int(ceil(num_nodes / total_pes))
