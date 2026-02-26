@@ -1,22 +1,9 @@
-Exemplos de comandos:
+1. Geração Padrão (Clock USE)
+Gera 10 grafos em um grid 15x15, exigindo 20 portas lógicas. 
 
-Para gerar grafos balanceados:
+python scripts/runner.py single --tec qca --backwards --k-graphs 10 --arch-size 15 15 --num-gates 20 --visualize --output-dir datasets/results_use 
 
-USE:
+2. Geração com Clock 2DDWAVE  
+Gera 10 grafos usando o esquema de clock direcional (T). 
 
-python scripts/runner.py single  --tec qca  --balanced --k-graphs 10     --num-inputs 3  --obstacle-intensity 0.15    --visualize  --output-dir datasets/results_balanceados
-
-Para gerar grafos desbalanceados:
-
-USE:
-(Com Reconvergencia):
-python scripts/runner.py single --tec qca --qca-arch U --unbalanced --k-graphs 10 --arch-size 20 20 --num-inputs 3 --num-derivations 2 --grammar-reconvergence True --visualize --output-dir datasets/results_desbalanceados
-
-(Sem Reconvergencia):
--Mais facil de Gerar.
-python scripts/runner.py single --tec qca --qca-arch U --unbalanced --k-graphs 10 --arch-size 20 20 --num-inputs 3 --num-derivations  2 --grammar-reconvergence False --visualize --output-dir datasets/results_desbalanceados
-
-2DDWAVE:
-
-python scripts/runner.py single --tec qca --qca-arch T --unbalanced --k-graphs 10 --num-inputs 2 --num-derivations 2 --visualize --output-dir datasets/results_desbalanceados
-
+python scripts/runner.py single --tec qca --qca-arch T --backwards --k-graphs 10 --arch-size 15 15 --num-gates 20 --visualize --output-dir datasets/results_2ddwave 
