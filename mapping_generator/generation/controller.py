@@ -1,8 +1,9 @@
 import logging
 import random
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 from math import ceil
 import os
+import networkx as nx
 
 from .generators.cgra_grammar_generator import CgraGrammarGenerator
 from .generators.cgra_random_generator import CgraRandomGenerator
