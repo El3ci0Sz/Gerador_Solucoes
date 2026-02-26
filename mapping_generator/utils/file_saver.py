@@ -1,5 +1,3 @@
-# mapping_generator/utils/file_saver.py
-
 import os
 import json
 import re
@@ -9,7 +7,6 @@ from typing import Dict, Optional, Tuple, Any
 from .visualizer import GraphVisualizer
 
 logger = logging.getLogger(__name__)
-
 
 class OutputPathManager:
     """
@@ -37,6 +34,15 @@ class OutputPathManager:
         """
         Constructs the subdirectory path based on generation parameters.
         
+        Args:
+            tec_name (str): The technology name (e.g., 'QCA' or 'CGRA').
+            gen_mode (str): The generation strategy used.
+            difficulty (Optional[int | str]): The difficulty level of the generation.
+            interconnect (Optional[str]): The interconnection architecture type.
+            arch_size (Optional[Tuple[int, int]]): The grid dimensions (rows, cols).
+            num_nodes (Optional[int]): The total number of nodes in the graph.
+            qca_arch_type (Optional[str]): The QCA clock zone architecture type.
+            
         Returns:
             str: The relative path for the output directory.
         """
@@ -88,8 +94,19 @@ class OutputPathManager:
         is_fallback: bool = False
     ) -> str:
         """
-        Generates a standardized filename.
-        Format: {tec}_map_diff{difficulty}_{arch}_N{nodes}_E{edges}_{index}
+        Generates a standardized filename for the output files.
+        
+        Args:
+            tec_name (str): The technology name.
+            arch_size (Tuple[int, int]): The grid dimensions (rows, cols).
+            num_nodes (int): The total number of nodes in the graph.
+            num_edges (int): The total number of edges in the graph.
+            difficulty (int | str): The difficulty level or constraint identifier.
+            index (int): The unique index of the generated graph.
+            is_fallback (bool): Indicates if the file was generated using a fallback strategy.
+            
+        Returns:
+            str: The formatted filename without extension.
         """
         arch_str = f"{arch_size[0]}x{arch_size[1]}"
         
@@ -106,7 +123,15 @@ class OutputPathManager:
     
     @staticmethod
     def get_interconnect_name(bits: str) -> str:
-        """Returns the interconnection name based on the bitmask."""
+        """
+        Returns the interconnection name based on the provided bitmask.
+        
+        Args:
+            bits (str): The bitmask representing the interconnection type.
+            
+        Returns:
+            str: The mapped interconnection name or 'custom'.
+        """
         return OutputPathManager.BIT_TO_NAME.get(bits, "custom")
     
     @staticmethod
@@ -126,8 +151,28 @@ class OutputPathManager:
         metrics: Optional[Dict] = None,
         **extra_fields
     ) -> Dict[str, Any]:
-        """Constructs a comprehensive metadata dictionary."""
+        """
+        Constructs a comprehensive metadata dictionary for the JSON output.
         
+        Args:
+            tec_name (str): The technology name.
+            num_nodes (int): The total number of nodes.
+            num_edges (int): The total number of edges.
+            arch_size (Tuple[int, int]): The grid dimensions.
+            gen_mode (str): The generation strategy.
+            difficulty (Optional[int | str]): The difficulty level.
+            recipe (Optional[Dict]): The generation recipe constraints.
+            alpha (Optional[float]): The alpha probability for random edges.
+            ii (Optional[int]): The initiation interval.
+            bits (Optional[str]): The CGRA interconnection bitmask.
+            interconnect_name (Optional[str]): The mapped interconnection name.
+            qca_arch_type (Optional[str]): The QCA architecture type.
+            metrics (Optional[Dict]): Collected graph metrics and statistics.
+            **extra_fields: Additional fields to append to the metadata.
+            
+        Returns:
+            Dict[str, Any]: The structured metadata dictionary.
+        """
         metadata = {
             'tec_name': tec_name,
             'tec': tec_name.lower(),
@@ -140,7 +185,6 @@ class OutputPathManager:
             'architecture_dimensions': f"{arch_size[0]}x{arch_size[1]}"
         }
         
-        # Graph Properties
         graph_properties = {
             "node_count": num_nodes,
             "edge_count": num_edges
@@ -150,7 +194,6 @@ class OutputPathManager:
             metadata['ii'] = ii
         metadata['graph_properties'] = graph_properties
         
-        # Generation Properties
         generation_properties = {}
         if difficulty is not None:
             generation_properties["difficulty"] = difficulty
@@ -166,7 +209,6 @@ class OutputPathManager:
         if generation_properties:
             metadata['generation_properties'] = generation_properties
         
-        # Architecture Properties
         arch_props = {
             "type": tec_name,
             "dimensions": list(arch_size)
@@ -200,14 +242,16 @@ class OutputPathManager:
 
 class FileSaver:
     """
-    Handles saving generated graphs in various formats (DOT, JSON, PNG).
+    Handles saving generated graphs in various formats including DOT, JSON, and PNG.
     """
     
     def __init__(self, output_dir: str, no_images: bool = False):
         """
+        Initializes the FileSaver instance.
+        
         Args:
             output_dir (str): Base directory for saving files.
-            no_images (bool): If True, skips PNG generation.
+            no_images (bool): Flag to disable PNG image generation.
         """
         self.output_dir = output_dir
         self.no_images = no_images
@@ -221,10 +265,16 @@ class FileSaver:
         subdirs: str
     ) -> Dict[str, Optional[str]]:
         """
-        Saves the graph to disk.
-
+        Saves the generated graph to disk in the required formats.
+        
+        Args:
+            graph (nx.DiGraph): The graph to save.
+            filename_base (str): The base filename without extension.
+            metadata (Dict[str, Any]): The metadata dictionary for the JSON file.
+            subdirs (str): The relative subdirectory path to save the files into.
+            
         Returns:
-            Dict: Paths to the saved files.
+            Dict[str, Optional[str]]: A dictionary containing paths to the saved files.
         """
         full_dir = os.path.join(self.output_dir, subdirs)
         os.makedirs(full_dir, exist_ok=True)
@@ -237,14 +287,12 @@ class FileSaver:
         paths = {}
         
         try:
-            # Save DOT/PNG
             if self.no_images:
                 GraphVisualizer.generate_dot_file_only(graph, dot_path)
             else:
                 GraphVisualizer.generate_custom_dot_and_image(graph, dot_path, path_base)
             paths['dot'] = dot_path
             
-            # Save JSON
             self._save_json(graph, json_path, metadata)
             paths['json'] = json_path
             paths['png'] = png_path
@@ -257,7 +305,14 @@ class FileSaver:
             raise
     
     def _save_json(self, graph: nx.DiGraph, json_path: str, metadata: Dict[str, Any]):
-        """Saves the graph structure and metadata to a JSON file."""
+        """
+        Saves the graph structure and metadata to a structured JSON file.
+        
+        Args:
+            graph (nx.DiGraph): The graph instance.
+            json_path (str): The complete file path where the JSON will be saved.
+            metadata (Dict[str, Any]): The metadata to embed in the JSON.
+        """
         placement = {}
         for node, data in graph.nodes(data=True):
             node_name = data.get('name', str(node))
@@ -275,12 +330,16 @@ class FileSaver:
         json_data = {
             'graph_name': os.path.basename(json_path).replace('.json', ''),
             'metadata': metadata,
-            'graph_properties': metadata.get('graph_properties', {}),
-            'architecture_properties': metadata.get('architecture_properties', {}),
             'placement': placement,
             'edges': edges
         }
         
+        if metadata.get('graph_properties'):
+            json_data['graph_properties'] = metadata['graph_properties']
+            
+        if metadata.get('architecture_properties'):
+            json_data['architecture_properties'] = metadata['architecture_properties']
+            
         if 'generation_properties' in metadata:
             json_data['generation_properties'] = metadata['generation_properties']
         
@@ -293,8 +352,13 @@ class FileSaver:
     @staticmethod
     def _compact_coordinates(json_string: str) -> str:
         """
-        Compacts list coordinates in the JSON string for better readability.
-        Converts [1, \n 2] to [1, 2].
+        Compacts array representations in the JSON string for better readability.
+        
+        Args:
+            json_string (str): The raw JSON string.
+            
+        Returns:
+            str: The formatted JSON string with compacted coordinates.
         """
         return re.sub(
             r'\[\s*(-?\d+),\s*(-?\d+)(,\s*-?\d+)?\s*\]',

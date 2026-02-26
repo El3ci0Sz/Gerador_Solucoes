@@ -1,11 +1,8 @@
 import argparse
 
-def create_parser():
+def create_parser() -> argparse.ArgumentParser:
     """
-    Creates and configures the command-line argument parser.
-    
-    - balanced (LayeredTree) - 100% clock valid
-    - unbalanced (Grammar) - For comparison/testing
+    Creates and configures the command-line argument parser for the mapping generator.
     """
     parser = argparse.ArgumentParser(
         description="Mapping Generator for CGRA and QCA.",
@@ -13,19 +10,11 @@ def create_parser():
     )
     subparsers = parser.add_subparsers(dest='command', required=True, help='Available commands')
 
-    # --- SINGLE COMMAND ---
     parser_single = subparsers.add_parser('single', help='Run a single generation task.')
     parser_single.add_argument('--tec', type=str, default='cgra', choices=['cgra', 'qca'], help='Target technology.')
     parser_single.add_argument('--gen-mode', type=str, default='grammar', choices=['grammar', 'random'], help='Generation mode.')
     parser_single.add_argument('--k-graphs', type=int, default=10, help='Number of graphs to generate.')
-    parser_single.add_argument(
-        '--obstacle-intensity', 
-        type=float, 
-        default=0.15, 
-        help='Intensity of obstacles in the grid (0.0 to 1.0). Default: 0.15'
-    )
     
-    # CGRA Params
     parser_single.add_argument(
         '--strategy', 
         type=str, 
@@ -40,11 +29,6 @@ def create_parser():
         default=1, 
         help='Difficulty level for systematic strategy (1-20). Required when --strategy systematic.'
     )
-    parser_single.add_argument(
-        '--use-layered-tree',
-        action='store_true',
-        help='Use LayeredBalancedGenerator (ZERO reconvergence, tree structure). Requires --balanced.'
-    )
     
     parser_single.add_argument(
         '--difficulty-range', 
@@ -54,40 +38,37 @@ def create_parser():
         help='Difficulty range for random strategy (e.g., 1 10). Required when --strategy random.'
     )
     
-    # Common Params
     parser_single.add_argument('--arch-size', type=int, nargs=2, default=[4, 4], help='Architecture dimensions (rows cols).')
     parser_single.add_argument('--graph-range', type=int, nargs=2, default=[8, 10], help='Min and max number of nodes for the DFG.')
     parser_single.add_argument('--bits', type=str, default='1000', help='CGRA interconnection bits (mdht).')
     parser_single.add_argument('--k-range', type=int, nargs=2, default=[2, 3], help='K-range for grammar rules.')
     parser_single.add_argument('--max-path-length', type=int, default=15, help='Max path length for routing.')
     
-    # QCA Params
     parser_single.add_argument('--qca-arch', type=str, default='U', choices=['U', 'R', 'T'], help='QCA architecture type.')
     parser_single.add_argument('--num-inputs', type=int, default=3, help='Number of input nodes to seed.')
-    parser_single.add_argument('--num-derivations', type=int, default=10, help='Number of derivations (complexity control). Only used for balanced/grammar strategies, NOT for 2DDWave.')
-    parser_single.add_argument('--routing-factor', type=float, default=2.5, help='Multiplier for estimating routing space.')
+    parser_single.add_argument('--num-derivations', type=int, default=10, help='Number of derivations.')
+    parser_single.add_argument('--routing-factor', type=float, default=2.5, help='Multiplier for routing.')
+    parser_single.add_argument('--num-gates', type=int, default=10, help='Target number of logic gates.')
+    parser_single.add_argument('--num-outputs', type=int, default=1, help='Number of output nodes to seed.')
+    parser_single.add_argument('--no-detailed-stats', action='store_true', help='Disable exact node type counts in JSON.')
     
-    parser_single.add_argument(
-        '--force-grid-size',
-        type=int,
-        nargs=2,
-        metavar=('ROWS', 'COLS'),
-        help='Force a STATIC grid size (e.g., 12 16). Grid will NOT expand. For 2DDWave/cascading strategy only.'
-    )
-    
-    parser_single.add_argument(
+    group_qca_strat = parser_single.add_mutually_exclusive_group()
+    group_qca_strat.add_argument(
         '--balanced',
         action='store_true',
-        help='Generate BALANCED QCA graphs (100% clock valid, RECOMMENDED).'
+        help='Generate BALANCED QCA graphs (100%% clock valid, RECOMMENDED).'
     )
-    
-    parser_single.add_argument(
+    group_qca_strat.add_argument(
         '--unbalanced',
         action='store_true',
         help='Generate UNBALANCED QCA graphs (for comparison/testing).'
     )
+    group_qca_strat.add_argument(
+        '--backwards',
+        action='store_true',
+        help='Generate COMPLEX QCA graphs using Backwards (Reverse) flow.'
+    )
     
-    # Output/Misc
     parser_single.add_argument('--no-extend-io', action='store_true', help='Disable I/O extension to border.')
     parser_single.add_argument('--no-images', action='store_true', help='Disable PNG image generation.')
     
@@ -111,17 +92,9 @@ def create_parser():
     parser_single.add_argument(
         '--flexible-recipe',
         action='store_true',
-        help='If set, accepts graphs even if the difficulty recipe (convergences) is not 100% fulfilled (CGRA only).'
+        help='If set, accepts graphs even if the difficulty recipe (convergences) is not 100%% fulfilled (CGRA only).'
     )
 
-    parser_single.add_argument(
-        '--grammar-reconvergence',
-        type=lambda x: (str(x).lower() in ['true', '1', 'yes']),
-        default=True,
-        help='Enable Reconvergence Rule in QCA Grammar (USE). If False, generates Trees only. Default: True.'
-    )
-
-    # --- BENCHMARK COMMAND ---
     parser_benchmark_v2 = subparsers.add_parser('benchmark_v2', help='Run the new benchmark with configurable strategies.')
     parser_benchmark_v2.add_argument('--output-dir', type=str, default='results_benchmark_v2', help='Base directory to save the benchmark output files.')
     parser_benchmark_v2.add_argument('--workers', type=int, default=None, help='Number of parallel workers. Default is all available CPU cores.')

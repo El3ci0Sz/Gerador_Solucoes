@@ -1,61 +1,63 @@
-# scripts/runner.py
-
-"""
-Main script for executing mapping generation.
-
-Available commands:
-- single: Single execution with specific parameters.
-- benchmark_v2: Configurable full benchmark.
-"""
-
 import os
 import sys
-
-# Add parent directory to path immediately
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
-
 import argparse
 import logging
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 from mapping_generator.cli import create_parser
 from mapping_generator.generation.controller import GenerationTask
 from mapping_generator.utils.logger_setup import setup_logger
 
-def run_single_generation(args):
+def run_single_generation(args: argparse.Namespace) -> None:
     """
-    Executes a single generation task based on CLI arguments.
+    Executes a single generation task based on the provided command-line arguments.
+
+    Args:
+        args (argparse.Namespace): The parsed command-line arguments containing the configuration for the generation.
+
+    Returns:
+        None
     """
     print("=" * 60)
-    print("SINGLE EXECUTION - Single Generation")
+    print("EXECUÇÃO SINGLE - Geração Única")
     print("=" * 60)
     
     task_params = _build_task_params_from_args(args)
     
     try:
-        # Unpack parameters for Task
         task = GenerationTask(**task_params)
         success = task.run()
         
         if success:
-            print("\nGeneration completed successfully!")
+            print("\n✅ Geração concluída com sucesso!")
             if task.generator and task.file_saver:
-                print(f"Results at: {os.path.abspath(task.file_saver.output_dir)}")
+                print(f"📁 Resultados em: {os.path.abspath(task.file_saver.output_dir)}")
         else:
-            print("\nGeneration failed.")
+            print("\n❌ Geração falhou.")
             
     except Exception as e:
-        print(f"\nError during generation: {e}")
-        logging.error(f"Task error: {e}", exc_info=True)
+        print(f"\n❌ Erro durante geração: {e}")
+        logging.error(f"Erro na execução single: {e}", exc_info=True)
 
-def _build_task_params_from_args(args) -> dict:
-    """Constructs parameter dictionary from arguments."""
+
+def _build_task_params_from_args(args: argparse.Namespace) -> dict:
+    """
+    Extracts and formats generation parameters from the parsed command-line arguments.
+
+    Args:
+        args (argparse.Namespace): The parsed command-line arguments.
+
+    Returns:
+        dict: A dictionary containing the structured parameters required to initialize a GenerationTask.
+    """
     params = {
         'tec': args.tec,
-        'gen_mode': args.gen_mode,
+        'gen_mode': args.gen_mode if hasattr(args, 'gen_mode') else 'grammar',
         'k': args.k_graphs,
         'output_dir': args.output_dir,
         'no_images': args.no_images,
@@ -72,19 +74,14 @@ def _build_task_params_from_args(args) -> dict:
         params['max_path_length'] = args.max_path_length
         params['ii'] = args.ii
         params['alpha'] = args.alpha
-        
-        if args.gen_mode == 'grammar':
-            params['strategy'] = args.strategy
-            if args.strategy == 'systematic':
-                params['difficulty'] = args.difficulty
-            elif args.strategy == 'random':
-                if not args.difficulty_range:
-                    raise ValueError("--difficulty-range required for --strategy random")
-                params['difficulty_range'] = args.difficulty_range
-                params['adaptive'] = True
-                
-            if hasattr(args, 'flexible_recipe'):
-                params['flexible_recipe'] = args.flexible_recipe
+        params['strategy'] = args.strategy
+        if args.strategy == 'systematic':
+            params['difficulty'] = args.difficulty
+        elif args.strategy == 'random':
+            if not args.difficulty_range:
+                raise ValueError("--difficulty-range obrigatório para --strategy random")
+            params['difficulty_range'] = args.difficulty_range
+            params['adaptive'] = True
     
     elif args.tec == 'qca':
         params['arch_sizes'] = [tuple(args.arch_size)]
@@ -92,34 +89,44 @@ def _build_task_params_from_args(args) -> dict:
         params['num_inputs'] = args.num_inputs
         params['num_derivations'] = args.num_derivations
         params['routing_factor'] = args.routing_factor
+        params['num_gates'] = args.num_gates
+        params['num_outputs'] = args.num_outputs
+        params['detailed_stats'] = not getattr(args, 'no_detailed_stats', False)
         
-        if hasattr(args, 'force_grid_size') and args.force_grid_size:
-            params['force_grid_size'] = tuple(args.force_grid_size)
-            
-        if hasattr(args, 'grammar_reconvergence'):
-            params['grammar_reconvergence'] = args.grammar_reconvergence
-        
-        if hasattr(args, 'balanced') and args.balanced:
-            params['balanced'] = True
+        if hasattr(args, 'backwards') and args.backwards:
+            params['qca_strategy'] = 'backwards'
         elif hasattr(args, 'unbalanced') and args.unbalanced:
-            params['unbalanced'] = True
+            params['qca_strategy'] = 'grammar'
         else:
-            params['balanced'] = True
-            
-        if hasattr(args, 'use_layered_tree'):
-            params['use_layered_tree'] = args.use_layered_tree
-        if hasattr(args, 'obstacle_intensity'):
-            params['obstacle_intensity'] = args.obstacle_intensity
+            params['qca_strategy'] = 'multicluster'  
     
     return params
 
-def run_benchmark_v2(args):
+
+def run_benchmark_v2(args: argparse.Namespace) -> None:
+    """
+    Executes the benchmark suite using configurable strategies.
+
+    Args:
+        args (argparse.Namespace): The parsed command-line arguments.
+
+    Returns:
+        None
+    """
     print("=" * 60)
     print("BENCHMARK V2")
     print("=" * 60)
-    print("Benchmark V2 is under development.")
+    print("⚠️  Benchmark V2 is under development.")
 
-def main():
+
+def main() -> None:
+    """
+    The main entry point of the script. Parses arguments, configures logging,
+    and delegates execution to the appropriate command handler.
+
+    Returns:
+        None
+    """
     parser = create_parser()
     args = parser.parse_args()
     
@@ -131,7 +138,7 @@ def main():
         run_benchmark_v2(args)
     else:
         print(f"Unknown command: {args.command}")
-        parser.print_help()
+
 
 if __name__ == "__main__":
     main()

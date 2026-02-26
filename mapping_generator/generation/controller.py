@@ -4,31 +4,50 @@ from typing import Optional, List, Tuple
 from math import ceil
 import os
 
-# IMPORTS
-from mapping_generator.generation.generators.cgra_grammar_generator import CgraGrammarGenerator
-from mapping_generator.generation.generators.cgra_random_generator import CgraRandomGenerator
-from mapping_generator.generation.qca_generation.QcaLayeredBalancedGenerator import QcaLayeredBalancedGenerator
-from mapping_generator.generation.qca_generation.QcaGrammarGenerator import QcaGrammarGenerator
-from mapping_generator.generation.qca_generation.Qca2DDWaveCascadingGenerator import Qca2DDWaveCascadingGenerator
+from .generators.cgra_grammar_generator import CgraGrammarGenerator
+from .generators.cgra_random_generator import CgraRandomGenerator
+from .qca_generation.QcaMultiClusterGenerator import QcaMultiClusterGenerator
+from .qca_generation.QcaGrammarGenerator import QcaGrammarGenerator
+from .qca_generation.QcaBackwardsGenerator import QcaBackwardsGenerator 
 
-from mapping_generator.architectures.qca import QCA
-from mapping_generator.generation.strategies import SystematicStrategy, RandomStrategy
-from mapping_generator.utils.file_saver import FileSaver, OutputPathManager
-from mapping_generator.generation.strategies.recipes import generate_recipes
-from mapping_generator.utils.visualizer import GraphVisualizer
+from ..architectures.qca import QCA
+from .strategies import SystematicStrategy, RandomStrategy
+from ..utils.file_saver import FileSaver, OutputPathManager
+from .strategies.recipes import generate_recipes
+from ..utils.qca_analysis import QcaValidator
+from ..utils.visualizer import GraphVisualizer
 
 logger = logging.getLogger(__name__)
 
 class QcaGeneratorWithSave:
     """
-    Internal wrapper to coordinate QCA generation, validation, and saving.
+    Coordinates QCA mapping generation, validation, metrics calculation, and file saving.
     """
-    def __init__(self, k_target, arch_sizes, qca_arch, num_inputs,
-                 num_derivations, routing_factor, retries_multiplier, file_saver,
-                 balanced=True, visualize=False, use_layered=False, obstacle_intensity=0.15,
-                 target_nodes=None, max_skew=3, allow_reconvergence=True, force_grid_size=None,
-                 grammar_reconvergence=False):
+    def __init__(
+        self, k_target: int, arch_sizes: List[Tuple[int, int]], qca_arch: str, 
+        num_inputs: int, num_derivations: int, routing_factor: float, 
+        retries_multiplier: int, file_saver: FileSaver, qca_strategy: str = 'multicluster', 
+        num_gates: int = 10, num_outputs: int = 1, visualize: bool = False, 
+        detailed_stats: bool = True
+    ): 
+        """
+        Initializes the QCA generator wrapper.
         
+        Args:
+            k_target (int): Target number of valid graphs to generate.
+            arch_sizes (List[Tuple[int, int]]): Possible grid dimensions for generation.
+            qca_arch (str): QCA clock architecture type ('U', 'R', 'T').
+            num_inputs (int): Number of inputs (used in grammar/multicluster strategies).
+            num_derivations (int): Target depth/derivations (used in grammar/multicluster).
+            routing_factor (float): Multiplier factor for routing constraints.
+            retries_multiplier (int): Multiplier for allowed failed generation attempts.
+            file_saver (FileSaver): Instance responsible for saving results.
+            qca_strategy (str): Chosen generation strategy ('multicluster', 'backwards', 'grammar').
+            num_gates (int): Minimum required gate count for backwards strategy.
+            num_outputs (int): Required number of outputs for backwards strategy.
+            visualize (bool): Flag to trigger visual dot and grid generation.
+            detailed_stats (bool): Flag to count node types accurately post-pruning.
+        """
         self.k_target = k_target
         self.arch_sizes = arch_sizes
         self.qca_arch_type = qca_arch
@@ -38,51 +57,47 @@ class QcaGeneratorWithSave:
         self.retries_multiplier = retries_multiplier
         self.file_saver = file_saver
         self.visualize = visualize
-        self.use_layered = use_layered
-        self.obstacle_intensity = obstacle_intensity
-        self.target_nodes = target_nodes or (num_derivations * 3)
-        self.max_skew = max_skew
-        self.allow_reconvergence = allow_reconvergence
-        self.force_grid_size = force_grid_size
-        self.grammar_reconvergence = grammar_reconvergence # Salva o parâmetro
+        self.num_gates = num_gates
+        self.num_outputs = num_outputs
+        self.detailed_stats = detailed_stats
+        self.strategy = qca_strategy
         
-        # Strategy Selection Logic
-        if balanced:
-            self.strategy = 'layered_tree'
-            self.strategy_label = 'Balanced (Physical Merge Tree)'
-            logger.info("QCA Mode: BALANCED TREE - Zero skew, Grid-based layout.")
+        if self.strategy == 'multicluster':
+            self.strategy_label = 'Balanced (MultiCluster)'
+            logger.info("QCA Mode: BALANCED - MultiCluster")
+        elif self.strategy == 'backwards':
+            self.strategy_label = 'Complex (Backwards)'
+            logger.info(f"QCA Mode: COMPLEX - Backwards Generator (Min Gates: {self.num_gates}, Outputs: {self.num_outputs})")
         else:
-            if qca_arch.upper() in ['T', '2DDWAVE', 'TILE']:
-                self.strategy = 'cascading'
-                self.strategy_label = 'Unbalanced (Cascading - 2DDWave)'
-                logger.info("🌊 QCA Mode: CASCADING GROWTH - Varied but 100% valid for 2DDWave!")
-            else:
-                self.strategy = 'grammar'
-                self.strategy_label = 'Unbalanced (Grammar - USE)'
-                rec_status = "ENABLED" if self.grammar_reconvergence else "DISABLED"
-                logger.info(f"QCA Mode: GRAMMAR - For USE architecture. Reconvergence: {rec_status}")
+            self.strategy = 'grammar'
+            self.strategy_label = 'Unbalanced (Grammar)'
+            logger.warning("QCA Mode: UNBALANCED - Grammar")
         
         self.graphs_generated = 0
-    
+
     def generate(self) -> bool:
-        logger.info(f"Starting {self.strategy_label} generation. Target: {self.k_target}")
+        """
+        Executes the main generation loop, evaluating validity and extracting metrics.
+        
+        Returns:
+            bool: True if at least one graph was successfully generated and saved, False otherwise.
+        """
+        logger.info(f"Starting {self.strategy_label} generation")
+        logger.info(f"Target: {self.k_target} graphs")
         
         saved_count = 0
         total_attempts = 0
         max_attempts = self.k_target * self.retries_multiplier
+        generated_count = 0
         
         while saved_count < self.k_target and total_attempts < max_attempts:
             total_attempts += 1
             
+            if total_attempts % 50 == 0:
+                logger.info(f"Progress: {saved_count}/{self.k_target} saved, attempt {total_attempts}/{max_attempts}")
+            
             try:
-                if self.force_grid_size:
-                    initial_arch_size = tuple(self.force_grid_size)
-                    logger.info(f"🔒 Using FIXED grid size: {initial_arch_size}")
-                elif self.strategy == 'layered_tree':
-                    initial_arch_size = (20, 20)
-                else:
-                    initial_arch_size = random.choice(self.arch_sizes)
-                
+                initial_arch_size = random.choice(self.arch_sizes)
                 qca_architecture = QCA(dimensions=initial_arch_size, arch_type=self.qca_arch_type)
                 
                 generator = self._get_generator_instance(qca_architecture)
@@ -91,121 +106,112 @@ class QcaGeneratorWithSave:
                 if not placement_graph or placement_graph.number_of_nodes() == 0:
                     continue
                 
-                if self.force_grid_size:
-                    final_arch_size = tuple(self.force_grid_size)
-                else:
-                    nodes_coords = [n for n in placement_graph.nodes() if isinstance(n, tuple)]
-                    if nodes_coords:
-                        max_r = max(n[0] for n in nodes_coords)
-                        max_c = max(n[1] for n in nodes_coords)
-                        final_arch_size = (max_r + 2, max_c + 2)
-                    else:
-                        final_arch_size = initial_arch_size
+                final_arch_size = qca_architecture.dim 
+                generated_count += 1
+                
+                try:
+                    is_valid, errors = QcaValidator.validate(placement_graph, qca_architecture.get_border_nodes())
+                    if not is_valid and generated_count <= 3:
+                        logger.debug(f"Validation failed: {errors[:2]}")
+                except Exception as e:
+                    logger.error(f"Validation exception: {e}")
+                
+                metrics = {
+                    'node_count': placement_graph.number_of_nodes(),
+                    'edge_count': placement_graph.number_of_edges()
+                }
+                
+                if self.detailed_stats:
+                    counts = {'routing': 0, 'operation': 0, 'input': 0, 'output': 0, 'outros': 0}
+                    for n, d in placement_graph.nodes(data=True):
+                        ntype = d.get('type', 'unknown')
+                        if ntype in counts:
+                            counts[ntype] += 1
+                        else:
+                            counts['outros'] += 1
+                    
+                    metrics.update(counts)
+                    logger.info(f"Stats - Portas: {counts['operation']} | Fios: {counts['routing']} | In: {counts['input']} | Out: {counts['output']}")
 
-                metrics = {} 
-                
-                saved_count += 1
-                self._save_graph(placement_graph, saved_count, final_arch_size, metrics)
-                
-                logger.info(f"✅ Generated {saved_count}/{self.k_target} ({self.strategy})")
-                
+                try:
+                    saved_count += 1
+                    self._save_graph(placement_graph, saved_count, final_arch_size, metrics)
+                except Exception as e:
+                    logger.error(f"Save exception: {e}", exc_info=True)
+                    saved_count -= 1
+                    continue
+
             except Exception as e:
-                logger.error(f"Error on attempt {total_attempts}: {e}")
+                logger.debug(f"Outer exception at attempt {total_attempts}: {e}")
                 continue
         
-        if saved_count > 0:
-            logger.info(f"🎉 Successfully generated {saved_count} graphs using {self.strategy}!")
-        else:
-            logger.warning(f"⚠️ Failed to generate any graphs after {total_attempts} attempts")
-        
+        self.graphs_generated = saved_count
+        logger.info(f"Generation Complete: Saved {saved_count}/{self.k_target} in {total_attempts} attempts.")
         return saved_count > 0
-
-    def _get_generator_instance(self, qca_architecture):
-        if self.strategy == 'layered_tree':
-            logger.debug("Using QcaLayeredBalancedGenerator")
-            return QcaLayeredBalancedGenerator(
-                qca_architecture=qca_architecture,
-                num_inputs=self.num_inputs,
-                target_depth=self.num_derivations,
-                obstacle_intensity=self.obstacle_intensity
-            )
+    
+    def _get_generator_instance(self, qca_architecture: QCA) -> object:
+        """
+        Instantiates the required generation class based on the selected strategy.
         
-        elif self.strategy == 'cascading':
-            logger.debug("Using Qca2DDWaveCascadingGenerator")
-            return Qca2DDWaveCascadingGenerator(
-                qca_architecture=qca_architecture,
-                num_inputs=self.num_inputs,
-                target_nodes=self.target_nodes,
-                allow_reconvergence=self.allow_reconvergence,
-                max_skew=self.max_skew,
-                force_static_grid=bool(self.force_grid_size)
-            )
-           
+        Args:
+            qca_architecture (QCA): The loaded QCA architecture instance.
+            
+        Returns:
+            object: An instance of the chosen generator strategy.
+        """
+        if self.strategy == 'multicluster':
+            return QcaMultiClusterGenerator(qca_architecture=qca_architecture, num_inputs=self.num_inputs, target_depth=self.num_derivations)
         elif self.strategy == 'grammar':
-            logger.debug("Using QcaGrammarGenerator (USE architecture)")
-            return QcaGrammarGenerator(
-                qca_architecture=qca_architecture,
-                num_inputs=self.num_inputs,
-                num_derivations=self.num_derivations,
-                routing_factor=self.routing_factor,
-                strict_balance=False,
-                force_static_grid=bool(self.force_grid_size),
-                grammar_reconvergence=self.grammar_reconvergence  # PASSA O PARÂMETRO
-            )
+            return QcaGrammarGenerator(qca_architecture=qca_architecture, num_inputs=self.num_inputs, num_derivations=self.num_derivations, routing_factor=self.routing_factor, strict_balance=False)
+        elif self.strategy == 'backwards':
+            return QcaBackwardsGenerator(qca_architecture=qca_architecture, target_gates=self.num_gates, num_outputs=self.num_outputs)
         else:
-            raise ValueError(f"Unknown strategy: {self.strategy}")
+            raise ValueError(f"Invalid QCA strategy: {self.strategy}")
 
-    def _save_graph(self, graph, index, arch_size, metrics):
-        num_nodes = graph.number_of_nodes()
-        num_edges = graph.number_of_edges()
+    def _save_graph(self, graph: nx.DiGraph, index: int, arch_size: Tuple[int, int], metrics: dict) -> Dict[str, Optional[str]]:
+        """
+        Prepares metadata and executes graph saving using the configured FileSaver.
         
-        if self.strategy == 'cascading':
-            difficulty_str = f"i{self.num_inputs}n{num_nodes}"
+        Args:
+            graph (nx.DiGraph): The fully generated and validated graph.
+            index (int): The generation iteration index.
+            arch_size (Tuple[int, int]): Final architecture grid dimensions.
+            metrics (dict): Collected metrics and statistics of the graph.
+            
+        Returns:
+            Dict[str, Optional[str]]: Paths to the saved files.
+        """
+        num_nodes = metrics['node_count']
+        num_edges = metrics['edge_count']
+        
+        if self.strategy == 'backwards':
+            filename = f"qca_map_{arch_size[0]}x{arch_size[1]}_P{self.num_gates}_N{num_nodes}_E{num_edges}_{index}"
+            difficulty_str = f"P{self.num_gates}"
         else:
             difficulty_str = f"i{self.num_inputs}d{self.num_derivations}"
-        
-        filename = OutputPathManager.build_filename(
-            tec_name='QCA',
-            arch_size=arch_size,
-            num_nodes=num_nodes,
-            num_edges=num_edges,
-            difficulty=difficulty_str,
-            index=index
-        )
+            filename = OutputPathManager.build_filename(
+                tec_name='QCA', arch_size=arch_size, num_nodes=num_nodes,
+                num_edges=num_edges, difficulty=difficulty_str, index=index
+            )
         
         subdirs = OutputPathManager.build_subdirs(
-            tec_name='QCA',
-            gen_mode=self.strategy,
-            arch_size=arch_size,
-            num_nodes=num_nodes,
-            qca_arch_type=self.qca_arch_type
+            tec_name='QCA', gen_mode=self.strategy, arch_size=arch_size,
+            num_nodes=num_nodes, qca_arch_type=self.qca_arch_type
         )
         
         metadata = {
-            'tec_name': 'QCA',
-            'tec': 'qca',
             'technology': 'QCA',
-            'gen_mode': f"qca_{self.strategy}",
-            'mode': self.strategy,
-            'qca_strategy': self.strategy,
-            'num_nodes': num_nodes,
-            'num_edges': num_edges,
+            'strategy': self.strategy,
             'arch_size': list(arch_size),
             'qca_arch_type': self.qca_arch_type,
-            'difficulty': difficulty_str,
-            'num_inputs': self.num_inputs,
             'metrics': metrics
         }
         
-        if self.strategy == 'cascading':
-            metadata['target_nodes'] = self.target_nodes
-            metadata['max_skew'] = self.max_skew
-            metadata['allow_reconvergence'] = self.allow_reconvergence
-        else:
+        if self.strategy != 'backwards':
+            metadata['num_inputs'] = self.num_inputs
             metadata['num_derivations'] = self.num_derivations
-            if self.strategy == 'grammar':
-                metadata['grammar_reconvergence'] = self.grammar_reconvergence
-        
+            metadata['difficulty'] = difficulty_str
+
         try:
             paths = self.file_saver.save_graph(graph, filename, metadata, subdirs)
             
@@ -226,7 +232,7 @@ class QcaGeneratorWithSave:
                         pass
             
             if paths and 'json' in paths:
-                logger.info(f"Saved #{index} | Strategy:{self.strategy} | Grid:{arch_size[0]}x{arch_size[1]} | Nodes:{num_nodes}")
+                logger.info(f"Saved #{index} | Nodes:{num_nodes} | {filename}")
             else:
                 logger.warning(f"Failed to save {self.strategy} graph #{index}")
             return paths
@@ -236,8 +242,21 @@ class QcaGeneratorWithSave:
 
 
 class GenerationTask:
-    def __init__(self, tec: str, gen_mode: str, k: int, output_dir: str = 'results', 
-                 no_images: bool = False, **kwargs):
+    """
+    Top-level manager class configuring and triggering the requested generation workflow.
+    """
+    def __init__(self, tec: str, gen_mode: str, k: int, output_dir: str = 'results', no_images: bool = False, **kwargs):
+        """
+        Initializes the Generation Task configuration.
+        
+        Args:
+            tec (str): Target technology ('cgra' or 'qca').
+            gen_mode (str): Mode of generation.
+            k (int): Target number of graphs.
+            output_dir (str): Base output directory.
+            no_images (bool): Flag to skip image generation.
+            **kwargs: Extra parameters dictating architecture options and configurations.
+        """
         self.tec = tec
         self.gen_mode = gen_mode
         self.k = k
@@ -249,124 +268,123 @@ class GenerationTask:
         self._validate_configuration()
     
     def _validate_configuration(self):
+        """Validates provided technology parameter against supported types."""
         if self.tec not in ['cgra', 'qca']:
             raise ValueError(f"Invalid technology '{self.tec}'")
-        if self.gen_mode not in ['grammar', 'random']:
-            raise ValueError(f"Invalid mode '{self.gen_mode}'")
     
     def run(self) -> bool:
+        """
+        Instantiates the generator and starts the execution cycle.
+        
+        Returns:
+            bool: Success status of the generated tasks.
+        """
         try:
             self.generator = self._create_generator()
             if not self.generator:
                 return False
-            
-            logger.info(f"Starting generation: {self.tec.upper()} + {self.gen_mode}, Target: {self.k} graphs")
             return self.generator.generate()
         except Exception as e:
             logger.error(f"Error during generation: {e}", exc_info=True)
             return False
             
-    def _create_generator(self):
+    def _create_generator(self) -> object:
+        """
+        Routes instantiation to the appropriate generator builder based on tech selection.
+        
+        Returns:
+            object: An instance of the targeted generator wrapper.
+        """
         if self.tec == 'cgra':
-            if self.gen_mode == 'grammar':
-                return self._create_cgra_grammar_generator()
-            elif self.gen_mode == 'random':
-                return self._create_cgra_random_generator()
+            if self.gen_mode == 'grammar': return self._create_cgra_grammar_generator()
+            elif self.gen_mode == 'random': return self._create_cgra_random_generator()
         elif self.tec == 'qca':
-            if self.gen_mode == 'grammar':
-                return self._create_qca_generator()
+            return self._create_qca_generator()
         raise ValueError(f"Unsupported combination: {self.tec} + {self.gen_mode}")
 
-    def _create_cgra_grammar_generator(self):
+    def _create_cgra_grammar_generator(self) -> object:
+        """
+        Builds CGRA Grammar Generator with current parameters.
+        
+        Returns:
+            object: Initialized CgraGrammarGenerator.
+        """
         strategy = self._create_difficulty_strategy()
         return CgraGrammarGenerator(
-            strategy=strategy,
-            k_target=self.k,
-            arch_sizes=self.params.get('arch_sizes', [(4, 4)]),
-            cgra_params=self.params.get('cgra_params', {'bits': '1000'}),
-            graph_range=self.params.get('graph_range', (10, 10)),
-            k_range=self.params.get('k_range', (2, 3)),
-            no_extend_io=self.params.get('no_extend_io', False),
-            max_path_length=self.params.get('max_path_length', 15),
-            fixed_ii=self.params.get('ii', None),
-            retries_multiplier=self.params.get('retries_multiplier', 150),
-            file_saver=self.file_saver,
+            strategy=strategy, k_target=self.k, arch_sizes=self.params.get('arch_sizes', [(4, 4)]),
+            cgra_params=self.params.get('cgra_params', {'bits': '1000'}), graph_range=self.params.get('graph_range', (10, 10)),
+            k_range=self.params.get('k_range', (2, 3)), no_extend_io=self.params.get('no_extend_io', False),
+            max_path_length=self.params.get('max_path_length', 15), fixed_ii=self.params.get('ii', None),
+            retries_multiplier=self.params.get('retries_multiplier', 150), file_saver=self.file_saver,
             allow_partial_recipe=self.params.get('flexible_recipe', False)
         )
 
-    def _create_cgra_random_generator(self):
+    def _create_cgra_random_generator(self) -> object:
+        """
+        Builds CGRA Random Generator with current parameters.
+        
+        Returns:
+            object: Initialized CgraRandomGenerator.
+        """
         return CgraRandomGenerator(
-            k_target=self.k,
-            arch_sizes=self.params.get('arch_sizes', [(4, 4)]),
-            cgra_params=self.params.get('cgra_params', {'bits': '1000'}),
-            graph_range=self.params.get('graph_range', (10, 10)),
-            alpha=self.params.get('alpha', 0.3),
-            fixed_ii=self.params.get('ii', None),
-            retries_multiplier=self.params.get('retries_multiplier', 150),
-            file_saver=self.file_saver
+            k_target=self.k, arch_sizes=self.params.get('arch_sizes', [(4, 4)]),
+            cgra_params=self.params.get('cgra_params', {'bits': '1000'}), graph_range=self.params.get('graph_range', (10, 10)),
+            alpha=self.params.get('alpha', 0.3), fixed_ii=self.params.get('ii', None),
+            retries_multiplier=self.params.get('retries_multiplier', 150), file_saver=self.file_saver
         )
 
-    def _create_qca_generator(self):
-        arch_sizes = self.params.get('arch_sizes', [(4, 4)])
-        qca_arch = self.params.get('qca_arch', 'U')
-        num_inputs = self.params.get('num_inputs', 3)
-        num_derivations = self.params.get('num_derivations', 10)
-        routing_factor = self.params.get('routing_factor', 2.5)
-        retries_multiplier = self.params.get('retries_multiplier', 150)
-        visualize = self.params.get('visualize', False)
-
-        balanced = self.params.get('balanced', True)
-        if self.params.get('unbalanced', False):
-            balanced = False
+    def _create_qca_generator(self) -> object:
+        """
+        Builds the QCA generator wrapper using parsed arguments.
         
-        use_layered = self.params.get('use_layered_tree', False)
-        obstacle_intensity = self.params.get('obstacle_intensity', 0.15)
-        
-        # Parâmetros para Cascading Strategy
-        target_nodes = self.params.get('target_nodes', num_derivations * 3)
-        max_skew = self.params.get('max_skew', 3)
-        allow_reconvergence = self.params.get('allow_reconvergence', True)
-        force_grid_size = self.params.get('force_grid_size', None)
-        
-        # Parâmetros para Grammar Strategy
-        grammar_reconvergence = self.params.get('grammar_reconvergence', True) # NOVO
-        
+        Returns:
+            object: Initialized QcaGeneratorWithSave.
+        """
         return QcaGeneratorWithSave(
             k_target=self.k,
-            arch_sizes=arch_sizes,
-            qca_arch=qca_arch,
-            num_inputs=num_inputs,
-            num_derivations=num_derivations,
-            routing_factor=routing_factor,
-            retries_multiplier=retries_multiplier,
+            arch_sizes=self.params.get('arch_sizes', [(4, 4)]),
+            qca_arch=self.params.get('qca_arch', 'U'),
+            num_inputs=self.params.get('num_inputs', 3),
+            num_derivations=self.params.get('num_derivations', 10),
+            routing_factor=self.params.get('routing_factor', 2.5),
+            retries_multiplier=self.params.get('retries_multiplier', 150),
             file_saver=self.file_saver,
-            balanced=balanced,
-            visualize=visualize,
-            use_layered=use_layered,
-            obstacle_intensity=obstacle_intensity,
-            target_nodes=target_nodes,
-            max_skew=max_skew,
-            allow_reconvergence=allow_reconvergence,
-            force_grid_size=force_grid_size,
-            grammar_reconvergence=grammar_reconvergence # PASSANDO
+            qca_strategy=self.params.get('qca_strategy', 'multicluster'),
+            num_gates=self.params.get('num_gates', 10),
+            num_outputs=self.params.get('num_outputs', 1),
+            detailed_stats=self.params.get('detailed_stats', True), 
+            visualize=self.params.get('visualize', False)
         )
 
-    def _create_difficulty_strategy(self):
+    def _create_difficulty_strategy(self) -> object:
+        """
+        Determines and instantiates the logic strategy for CGRA generation constraint targeting.
+        
+        Returns:
+            object: Loaded difficulty strategy block.
+        """
         strategy_name = self.params.get('strategy', 'systematic')
-        if strategy_name == 'systematic':
-            return SystematicStrategy(difficulty=self.params.get('difficulty', 1))
+        if strategy_name == 'systematic': return SystematicStrategy(difficulty=self.params.get('difficulty', 1))
         elif strategy_name == 'random':
             diff_range = self.params.get('difficulty_range', (1, 10))
             return RandomStrategy(difficulty_range=tuple(diff_range), adaptive=self.params.get('adaptive', True))
-        else:
-            raise ValueError(f"Unknown strategy: {strategy_name}")
+        else: raise ValueError(f"Unknown strategy: {strategy_name}")
 
 def get_ii(num_nodes: int, arch_size: tuple, fixed_ii: Optional[int] = None) -> int:
+    """
+    Calculates the Initiation Interval (II).
+    
+    Args:
+        num_nodes (int): Total number of nodes requiring logical placement.
+        arch_size (tuple): Processing Elements Grid (rows, cols).
+        fixed_ii (Optional[int]): Optional forced value bypassing automatic calculation.
+        
+    Returns:
+        int: Computed or explicitly assigned Initiation Interval.
+    """
     if fixed_ii is not None:
         return fixed_ii
     rows, cols = arch_size
     total_pes = rows * cols
     if total_pes == 0: return 1
-
     return int(ceil(num_nodes / total_pes))
-
